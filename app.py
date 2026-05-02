@@ -18,7 +18,7 @@ CORS(app)
 # =======================
 # LOAD MODEL & ASSETS
 # =======================
-model = keras.models.load_model("bisindo_model.h5", compile=False)
+model = keras.models.load_model("model.keras")
 scaler = joblib.load("scaler.pkl")
 label_encoder = joblib.load("label_encoder.pkl")
 
