@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>BISINDO Recognition</title>
+
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #e9e9e9;
+        }
+
+        .app {
+            display: flex;
+            padding: 30px;
+            gap: 40px;
+        }
+
+        .camera-box {
+            width: 720px;
+            height: 520px;
+            background: black;
+            border: 2px solid #333;
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        video,
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+        }
+
+        .panel {
+            flex: 1;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .prediction {
+            font-size: 28px;
+            margin-bottom: 30px;
+        }
+
+        .prediction span {
+            display: block;
+            font-weight: bold;
+            font-size: 60px;
+        }
+
+        .btn {
+            width: 140px;
+            padding: 10px;
+            margin: 10px auto;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="app">
+
+        <div class="camera-box">
+            <video class="input_video"></video>
+            <canvas class="output_canvas"></canvas>
+        </div>
+
+        <div class="panel">
+            <div class="prediction">
+                Abjad yang Dikenali:
+                <span id="prediction">-</span>
+            </div>
+
+            <button class="btn" id="startBtn">Start</button>
+            <button class="btn" id="stopBtn">Stop</button>
+            <button class="btn" id="exitBtn">Exit</button>
+        </div>
+
+    </div>
+
+    <script>
+        const videoElement = document.querySelector(".input_video");
+        const canvasElement = document.querySelector(".output_canvas");
+        const canvasCtx = canvasElement.getContext("2d");
+
+        const labelBox = document.getElementById("prediction");
+
+        let camera = null;
+        let running = false;
+
+        let lastPredictTime = 0;
+        const PREDICT_INTERVAL = 200;
+
+        function extractLandmarks(results) {
+
+            let left = new Array(63).fill(0);
+            let right = new Array(63).fill(0);
+
+            if (!results.multiHandLandmarks) {
+                return [...left, ...right];
+            }
+
+            for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+
+                const hand = results.multiHandLandmarks[i];
+                const label = results.multiHandedness[i].label;
+
+                let coords = [];
+
+                hand.forEach(lm => {
+                    coords.push(lm.x, lm.y, lm.z);
+                });
+
+                if (label === "Left") {
+                    left = coords;
+                } else {
+                    right = coords;
+                }
+            }
+
+            return [...left, ...right];
+        }
+
+        async function predictLandmark(landmarks, handCount) {
+            try {
+                const res = await fetch("/predict", {  // ✅ FIX DEPLOY
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        landmarks: landmarks,
+                        hand_count: handCount
+                    })
+                });
+
+                return await res.json();
+
+            } catch (err) {
+                console.error("API error:", err);
+                return { label: "-", conf: 0 };
+            }
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(async (results) => {
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                labelBox.innerText = "-";
+                canvasCtx.restore();
+                return;
+            }
+
+            let handCount = results.multiHandLandmarks.length;
+
+            for (const lm of results.multiHandLandmarks) {
+                drawConnectors(canvasCtx, lm, HAND_CONNECTIONS, {
+                    color: "#00FFFF",
+                    lineWidth: 1
+                });
+
+                drawLandmarks(canvasCtx, lm, {
+                    color: "#FF0000",
+                    radius: 2
+                });
+            }
+
+            const landmarks = extractLandmarks(results);
+
+            const now = Date.now();
+
+            if (now - lastPredictTime > PREDICT_INTERVAL) {
+                lastPredictTime = now;
+
+                const result = await predictLandmark(landmarks, handCount);
+
+                labelBox.innerText = result.label || "-";
+            }
+
+            canvasCtx.restore();
+        });
+
+        document.getElementById("startBtn").onclick = () => {
+
+            if (running) return;
+
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({ image: videoElement });
+                },
+                width: 720,
+                height: 520
+            });
+
+            camera.start();
+            running = true;
+        };
+
+        document.getElementById("stopBtn").onclick = () => {
+
+            if (camera) {
+                camera.stop();
+                running = false;
+                labelBox.innerText = "-";
+            }
+        };
+
+        document.getElementById("exitBtn").onclick = () => {
+            window.close();
+        };
+    </script>
+
+</body>
+
+</html>
